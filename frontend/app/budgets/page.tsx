@@ -19,6 +19,7 @@ import {
 import { monthLabel } from "@/lib/format";
 import {
   BTN_DANGER,
+  BTN_OUTLINE,
   BTN_PRIMARY,
   BTN_SECONDARY,
   CARD_CLASS,
@@ -69,24 +70,25 @@ function Budgets({
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Budget | null>(null);
+  const [deleting, setDeleting] = useState<Budget | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  async function handleDelete(budget: Budget) {
+  async function confirmDelete() {
+    if (!deleting) return;
     setActionError(null);
-    if (
-      !window.confirm(
-        `Delete the budget for "${budget.category.name}"?`,
-      )
-    ) {
-      return;
-    }
+    setDeleteBusy(true);
     try {
-      await deleteBudget(budget.id);
+      await deleteBudget(deleting.id);
+      setDeleting(null);
       budgets.reload();
     } catch (err) {
+      setDeleting(null);
       setActionError(
         err instanceof Error ? err.message : "Could not delete budget.",
       );
+    } finally {
+      setDeleteBusy(false);
     }
   }
 
@@ -125,31 +127,33 @@ function Budgets({
       {budgets.loading ? (
         <LoadingBlock label="Loading budgets…" />
       ) : budgets.data && budgets.data.length > 0 ? (
-        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-2 gap-3 md:gap-5 xl:grid-cols-3">
           {budgets.data.map((budget) => (
-            <article key={budget.id} className={`${CARD_CLASS} p-5`}>
-              <div className="flex items-start justify-between gap-3">
-                <h2 className="flex items-center gap-2 text-base font-semibold text-slate-900 dark:text-slate-100">
+            <article key={budget.id} className={`${CARD_CLASS} p-3 md:p-5`}>
+              <div className="flex items-start justify-between gap-2">
+                <h2 className="flex min-w-0 items-center gap-2 text-sm font-semibold text-slate-900 md:text-base dark:text-slate-100">
                   <span
                     aria-hidden
-                    className="h-3 w-3 rounded-full"
+                    className="h-2.5 w-2.5 shrink-0 rounded-full md:h-3 md:w-3"
                     style={{ backgroundColor: budget.category.color }}
                   />
-                  {budget.category.name}
+                  <span className="truncate">{budget.category.name}</span>
                 </h2>
-                <span className={`${PILL_CLASS} ${STATUS_STYLE[budget.status]}`}>
+                <span
+                  className={`${PILL_CLASS} shrink-0 ${STATUS_STYLE[budget.status]}`}
+                >
                   {STATUS_LABEL[budget.status]}
                 </span>
               </div>
 
-              <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
+              <p className="mt-2 text-xs text-slate-500 md:mt-3 md:text-sm dark:text-slate-400">
                 <span className="font-semibold text-slate-900 dark:text-slate-100">
                   <Money value={budget.spent} />
                 </span>{" "}
                 of <Money value={budget.amount} /> spent
               </p>
 
-              <div className="mt-3">
+              <div className="mt-2 md:mt-3">
                 <ProgressBar
                   value={budget.percentage}
                   tone={budget.status}
@@ -157,31 +161,31 @@ function Budgets({
                 />
               </div>
 
-              <div className="mt-2 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+              <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-slate-500 md:mt-2 md:text-xs dark:text-slate-400">
                 <span>{Math.round(budget.percentage)}%</span>
-                <span>
+                <span className="truncate">
                   {budget.status === "exceeded"
                     ? `Over by ${Math.abs(Math.round(budget.remaining))}`
                     : `${Math.round(budget.remaining)} remaining`}
                 </span>
               </div>
 
-              <div className="mt-5 flex gap-2">
+              <div className="mt-3 flex flex-wrap items-center gap-2 md:mt-5">
                 <button
                   type="button"
-                  className={`${BTN_SECONDARY} flex-1`}
+                  className={`${BTN_OUTLINE} grow md:px-4 md:py-2`}
                   onClick={() => {
                     setEditing(budget);
                     setActionError(null);
                     setFormOpen(true);
                   }}
                 >
-                  Edit amount
+                  Edit<span className="max-md:hidden"> amount</span>
                 </button>
                 <button
                   type="button"
                   className={BTN_DANGER}
-                  onClick={() => handleDelete(budget)}
+                  onClick={() => setDeleting(budget)}
                 >
                   Delete
                 </button>
@@ -214,6 +218,38 @@ function Budgets({
           }}
           onCancel={() => setFormOpen(false)}
         />
+      </Modal>
+
+      <Modal
+        open={deleting !== null}
+        onClose={() => setDeleting(null)}
+        title="Delete budget"
+      >
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          Delete the budget for{" "}
+          <span className="font-medium text-slate-900 dark:text-slate-100">
+            {deleting?.category.name}
+          </span>
+          ? This cannot be undone.
+        </p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            className={BTN_SECONDARY}
+            disabled={deleteBusy}
+            onClick={() => setDeleting(null)}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={confirmDelete}
+            disabled={deleteBusy}
+            className="inline-flex items-center justify-center rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-rose-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {deleteBusy ? "Deleting…" : "Delete"}
+          </button>
+        </div>
       </Modal>
     </>
   );

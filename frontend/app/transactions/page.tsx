@@ -7,22 +7,24 @@ import PageHeader from "@/components/PageHeader";
 import { EmptyState, ErrorBanner, LoadingBlock } from "@/components/States";
 import TransactionForm from "@/components/TransactionForm";
 import {
-  ACCOUNT_TYPE_LABELS,
   PAYMENT_METHOD_LABELS,
   createTransaction,
   deleteTransaction,
+  downloadTransactionsCsv,
   listAccounts,
   listCategories,
   listTransactions,
-  transactionsExportHref,
   updateTransaction,
   type Transaction,
   type TransactionFilters,
   type TransactionInput,
 } from "@/lib/api";
-import { formatDate } from "@/lib/format";
+import { MONTH_NAMES, formatDateNumeric } from "@/lib/format";
 import {
+  BTN_DANGER,
+  BTN_DANGER_TEXT,
   BTN_GHOST,
+  BTN_OUTLINE,
   BTN_PRIMARY,
   BTN_SECONDARY,
   CARD_CLASS,
@@ -36,19 +38,34 @@ const DEFAULT_FILTERS: TransactionFilters = {
   categoryId: "",
   accountId: "",
   search: "",
-  from: "",
-  to: "",
+  month: "",
   page: 1,
   pageSize: 10,
-  sortBy: "date",
-  sortOrder: "desc",
 };
+
+const MONTH_FILTER_OPTIONS = lastMonths(60);
+
+/** "All months" options for the month filter, newest first. */
+function lastMonths(count: number): { value: string; label: string }[] {
+  const now = new Date();
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date(now.getFullYear(), now.getMonth() - index, 1);
+    const month = date.getMonth() + 1;
+    return {
+      value: `${date.getFullYear()}-${String(month).padStart(2, "0")}`,
+      label: `${MONTH_NAMES[month - 1]} ${date.getFullYear()}`,
+    };
+  });
+}
 
 export default function TransactionsPage() {
   const [filters, setFilters] = useState<TransactionFilters>(DEFAULT_FILTERS);
   const [searchInput, setSearchInput] = useState("");
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Transaction | null>(null);
+  const [deleting, setDeleting] = useState<Transaction | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const accounts = useApi(() => listAccounts(), []);
@@ -91,14 +108,13 @@ export default function TransactionsPage() {
     accounts.reload();
   }
 
-  async function handleDelete(tx: Transaction) {
+  async function confirmDelete() {
+    if (!deleting) return;
     setActionError(null);
-    const confirmed = window.confirm(
-      `Delete "${tx.description}"? This cannot be undone.`,
-    );
-    if (!confirmed) return;
+    setDeleteBusy(true);
     try {
-      await deleteTransaction(tx.id);
+      await deleteTransaction(deleting.id);
+      setDeleting(null);
       if (transactions.data && transactions.data.data.length === 1 && filters.page && filters.page > 1) {
         setFilters((prev) => ({ ...prev, page: (prev.page ?? 1) - 1 }));
       } else {
@@ -106,9 +122,26 @@ export default function TransactionsPage() {
       }
       accounts.reload();
     } catch (error) {
+      setDeleting(null);
       setActionError(
         error instanceof Error ? error.message : "Could not delete transaction.",
       );
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
+  async function handleExport() {
+    setActionError(null);
+    setExporting(true);
+    try {
+      await downloadTransactionsCsv(filters);
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : "Could not export transactions.",
+      );
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -123,15 +156,20 @@ export default function TransactionsPage() {
         description="Search, filter and manage every income and expense."
         actions={
           <>
-            <a
-              href={transactionsExportHref(filters)}
+            <button
+              type="button"
+              onClick={handleExport}
+              disabled={exporting}
               className={BTN_SECONDARY}
-              download
             >
-              ⬇ Export CSV
-            </a>
-            <button type="button" onClick={openCreate} className={BTN_PRIMARY}>
-              + Add transaction
+              {exporting ? "Exporting…" : "⬇ Export CSV"}
+            </button>
+            <button
+              type="button"
+              onClick={openCreate}
+              className={`${BTN_PRIMARY} md:px-3 md:py-1.5`}
+            >
+              + Add
             </button>
           </>
         }
@@ -147,7 +185,7 @@ export default function TransactionsPage() {
       )}
 
       <section className={`${CARD_CLASS} mb-5 p-4`}>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <div>
             <label className={LABEL_CLASS} htmlFor="filter-search">
               Search
@@ -157,7 +195,7 @@ export default function TransactionsPage() {
               className={FIELD_CLASS}
               value={searchInput}
               onChange={(event) => setSearchInput(event.target.value)}
-              placeholder="Description…"
+              placeholder="search products…"
             />
           </div>
           <div>
@@ -230,75 +268,27 @@ export default function TransactionsPage() {
             </select>
           </div>
           <div>
-            <label className={LABEL_CLASS} htmlFor="filter-from">
-              From
-            </label>
-            <input
-              id="filter-from"
-              type="date"
-              className={FIELD_CLASS}
-              value={filters.from}
-              onChange={(event) =>
-                setFilters((prev) => ({
-                  ...prev,
-                  from: event.target.value,
-                  page: 1,
-                }))
-              }
-            />
-          </div>
-          <div>
-            <label className={LABEL_CLASS} htmlFor="filter-to">
-              To
-            </label>
-            <input
-              id="filter-to"
-              type="date"
-              className={FIELD_CLASS}
-              value={filters.to}
-              onChange={(event) =>
-                setFilters((prev) => ({ ...prev, to: event.target.value, page: 1 }))
-              }
-            />
-          </div>
-          <div>
-            <label className={LABEL_CLASS} htmlFor="filter-sort">
-              Sort by
+            <label className={LABEL_CLASS} htmlFor="filter-month">
+              Month
             </label>
             <select
-              id="filter-sort"
+              id="filter-month"
               className={FIELD_CLASS}
-              value={filters.sortBy}
+              value={filters.month}
               onChange={(event) =>
                 setFilters((prev) => ({
                   ...prev,
-                  sortBy: event.target.value as "date" | "amount",
+                  month: event.target.value,
                   page: 1,
                 }))
               }
             >
-              <option value="date">Date</option>
-              <option value="amount">Amount</option>
-            </select>
-          </div>
-          <div>
-            <label className={LABEL_CLASS} htmlFor="filter-order">
-              Order
-            </label>
-            <select
-              id="filter-order"
-              className={FIELD_CLASS}
-              value={filters.sortOrder}
-              onChange={(event) =>
-                setFilters((prev) => ({
-                  ...prev,
-                  sortOrder: event.target.value as "asc" | "desc",
-                  page: 1,
-                }))
-              }
-            >
-              <option value="desc">Newest / largest first</option>
-              <option value="asc">Oldest / smallest first</option>
+              <option value="">All months</option>
+              {MONTH_FILTER_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </div>
         </div>
@@ -318,22 +308,22 @@ export default function TransactionsPage() {
       </section>
 
       {result ? (
-        <div className="mb-4 grid gap-3 sm:grid-cols-3">
-          <div className={`${CARD_CLASS} px-4 py-3`}>
+        <div className="mb-4 grid grid-cols-3 gap-2 sm:gap-3">
+          <div className={`${CARD_CLASS} px-3 py-3 sm:px-4`}>
             <p className="text-xs text-slate-500 dark:text-slate-400">Income</p>
-            <p className="text-lg font-semibold text-emerald-600 dark:text-emerald-400">
+            <p className="mt-0.5 truncate text-base font-semibold text-emerald-600 sm:text-lg dark:text-emerald-400">
               <Money value={result.totals.income} />
             </p>
           </div>
-          <div className={`${CARD_CLASS} px-4 py-3`}>
+          <div className={`${CARD_CLASS} px-3 py-3 sm:px-4`}>
             <p className="text-xs text-slate-500 dark:text-slate-400">Expenses</p>
-            <p className="text-lg font-semibold text-rose-600 dark:text-rose-400">
+            <p className="mt-0.5 truncate text-base font-semibold text-rose-600 sm:text-lg dark:text-rose-400">
               <Money value={result.totals.expenses} />
             </p>
           </div>
-          <div className={`${CARD_CLASS} px-4 py-3`}>
+          <div className={`${CARD_CLASS} px-3 py-3 sm:px-4`}>
             <p className="text-xs text-slate-500 dark:text-slate-400">Net</p>
-            <p className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+            <p className="mt-0.5 truncate text-base font-semibold text-slate-900 sm:text-lg dark:text-slate-100">
               <Money value={result.totals.net} />
             </p>
           </div>
@@ -345,11 +335,75 @@ export default function TransactionsPage() {
       ) : result && result.data.length > 0 ? (
         <section className={`${CARD_CLASS} overflow-hidden`}>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-left text-sm">
+            <ul className="divide-y divide-slate-100 border-t border-slate-200 sm:hidden dark:divide-slate-800/60 dark:border-slate-800">
+              {result.data.map((tx) => (
+                <li key={tx.id} className="px-4 py-3">
+                  <div className="flex items-start gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">
+                        {tx.description}
+                      </p>
+                      <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                        <span className="shrink-0">
+                          {formatDateNumeric(tx.date)}
+                        </span>
+                        <span aria-hidden>·</span>
+                        {tx.category ? (
+                          <span
+                            aria-hidden
+                            className="h-2.5 w-2.5 shrink-0 rounded-full"
+                            style={{ backgroundColor: tx.category.color }}
+                          />
+                        ) : null}
+                        <span className="truncate">
+                          {tx.category?.name ?? "Uncategorised"}
+                        </span>
+                      </p>
+                      <p className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">
+                        {tx.account?.name ?? "—"}
+                      </p>
+                      {tx.notes ? (
+                        <p className="mt-0.5 truncate text-xs text-slate-400 dark:text-slate-500">
+                          {tx.notes}
+                        </p>
+                      ) : null}
+                    </div>
+                    <span
+                      className={`shrink-0 text-sm font-semibold ${
+                        tx.type === "INCOME"
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-rose-600 dark:text-rose-400"
+                      }`}
+                    >
+                      {tx.type === "INCOME" ? "+" : "−"}
+                      <Money value={tx.amount} />
+                    </span>
+                  </div>
+                  <div className="mt-2 flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openEdit(tx)}
+                      className={BTN_OUTLINE}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeleting(tx)}
+                      className={BTN_DANGER}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+
+            <table className="hidden w-full min-w-[720px] text-left text-sm sm:table">
               <thead>
                 <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:text-slate-400">
                   <th className="px-4 py-3 font-medium">Date</th>
-                  <th className="px-4 py-3 font-medium">Description</th>
+                  <th className="px-4 py-3 font-medium">Products</th>
                   <th className="px-4 py-3 font-medium">Category</th>
                   <th className="px-4 py-3 font-medium">Account</th>
                   <th className="px-4 py-3 font-medium">Method</th>
@@ -364,7 +418,7 @@ export default function TransactionsPage() {
                     className="border-b border-slate-100 last:border-0 hover:bg-slate-50 dark:border-slate-800/60 dark:hover:bg-slate-800/40"
                   >
                     <td className="whitespace-nowrap px-4 py-3 text-slate-500 dark:text-slate-400">
-                      {formatDate(tx.date)}
+                      {formatDateNumeric(tx.date)}
                     </td>
                     <td className="px-4 py-3 font-medium text-slate-800 dark:text-slate-100">
                       {tx.description}
@@ -387,9 +441,7 @@ export default function TransactionsPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
-                      {tx.account
-                        ? `${tx.account.name} (${ACCOUNT_TYPE_LABELS[tx.account.type as keyof typeof ACCOUNT_TYPE_LABELS] ?? tx.account.type})`
-                        : "—"}
+                      {tx.account?.name ?? "—"}
                     </td>
                     <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
                       {PAYMENT_METHOD_LABELS[tx.paymentMethod] ?? tx.paymentMethod}
@@ -405,20 +457,22 @@ export default function TransactionsPage() {
                       <Money value={tx.amount} />
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => openEdit(tx)}
-                        className={BTN_GHOST}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(tx)}
-                        className="inline-flex items-center rounded-lg px-3 py-1.5 text-sm font-medium text-rose-600 hover:bg-rose-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 dark:text-rose-400 dark:hover:bg-rose-950/40"
-                      >
-                        Delete
-                      </button>
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openEdit(tx)}
+                          className={BTN_GHOST}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeleting(tx)}
+                          className={BTN_DANGER_TEXT}
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -480,6 +534,38 @@ export default function TransactionsPage() {
           onSubmit={handleSubmit}
           onCancel={() => setFormOpen(false)}
         />
+      </Modal>
+
+      <Modal
+        open={deleting !== null}
+        onClose={() => setDeleting(null)}
+        title="Delete transaction"
+      >
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          Delete{" "}
+          <span className="font-medium text-slate-900 dark:text-slate-100">
+            {deleting?.description}
+          </span>
+          ? This cannot be undone.
+        </p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            className={BTN_SECONDARY}
+            disabled={deleteBusy}
+            onClick={() => setDeleting(null)}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={confirmDelete}
+            disabled={deleteBusy}
+            className="inline-flex items-center justify-center rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-rose-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {deleteBusy ? "Deleting…" : "Delete"}
+          </button>
+        </div>
       </Modal>
     </>
   );

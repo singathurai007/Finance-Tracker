@@ -62,12 +62,12 @@ export type Transaction = Prisma.TransactionModel
  */
 export type Budget = Prisma.BudgetModel
 /**
- * Model RecurringTransaction
- * 
- */
-export type RecurringTransaction = Prisma.RecurringTransactionModel
-/**
  * Model AuditLog
  * 
  */
 export type AuditLog = Prisma.AuditLogModel
+/**
+ * Model User
+ * 
+ */
+export type User = Prisma.UserModel

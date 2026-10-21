@@ -23,9 +23,13 @@ export default function StatCard({
   tone = "default",
 }: StatCardProps) {
   return (
-    <div className={`${CARD_CLASS} p-5`}>
-      <p className="text-sm text-slate-500 dark:text-slate-400">{label}</p>
-      <p className={`mt-2 text-2xl font-bold ${TONE_CLASS[tone]}`}>{value}</p>
+    <div className={`${CARD_CLASS} p-4 sm:p-5`}>
+      <p className="text-xs text-slate-500 sm:text-sm dark:text-slate-400">
+        {label}
+      </p>
+      <p className={`mt-1.5 text-xl font-bold sm:mt-2 sm:text-2xl ${TONE_CLASS[tone]}`}>
+        {value}
+      </p>
       {hint ? (
         <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
           {hint}

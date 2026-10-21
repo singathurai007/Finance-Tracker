@@ -19,6 +19,17 @@ export function formatDate(iso: string): string {
   });
 }
 
+/** DD/MM/YYYY, e.g. 20/10/2026. */
+export function formatDateNumeric(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
 export function formatDateTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;

@@ -4,10 +4,10 @@ import { AccountsModule } from './accounts/accounts.module.js';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { AuditModule } from './audit/audit.module.js';
+import { AuthModule } from './auth/auth.module.js';
 
 import { CategoriesModule } from './categories/categories.module.js';
 import { PrismaModule } from './prisma.module.js';
-import { RecurringModule } from './recurring/recurring.module.js';
 
 import { TransactionsModule } from './transactions/transactions.module.js';
 import { BudgetsModule } from './budgets/budgets.module.js';
@@ -26,11 +26,11 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
     }),
     PrismaModule,
     AuditModule,
+    AuthModule,
     AccountsModule,
     CategoriesModule,
     TransactionsModule,
     BudgetsModule,
-    RecurringModule,
     ReportsModule,
   ],
   controllers: [AppController],

@@ -14,7 +14,7 @@ import {
   listBudgets,
   listTransactions,
 } from "@/lib/api";
-import { formatDate, formatPercent, monthLabel } from "@/lib/format";
+import { formatDateNumeric, formatPercent, monthLabel } from "@/lib/format";
 import { CARD_CLASS } from "@/lib/ui";
 import { useApi } from "@/lib/useApi";
 import { usePeriod } from "@/lib/usePeriod";
@@ -66,6 +66,18 @@ function Dashboard({
 
   const periodLabel = `${monthLabel(month)} ${year}`;
 
+  const trendTotals =
+    trend.data && trend.data.length > 0
+      ? trend.data.reduce(
+          (acc, point) => ({
+            income: acc.income + point.income,
+            expenses: acc.expenses + point.expenses,
+            net: acc.net + point.net,
+          }),
+          { income: 0, expenses: 0, net: 0 },
+        )
+      : null;
+
   return (
     <>
       <PageHeader
@@ -80,7 +92,7 @@ function Dashboard({
         </div>
       ) : null}
 
-      <section className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3 sm:gap-5 xl:grid-cols-4">
         <StatCard
           label="Total Balance"
           tone={summary.data && summary.data.balance < 0 ? "negative" : "primary"}
@@ -279,32 +291,24 @@ function Dashboard({
                 <ErrorBanner message={recent.error} onRetry={recent.reload} />
               </div>
             ) : recent.data && recent.data.data.length > 0 ? (
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-y border-slate-200 text-xs uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:text-slate-400">
-                    <th className="px-5 py-2 font-medium">Description</th>
-                    <th className="px-5 py-2 font-medium">Category</th>
-                    <th className="px-5 py-2 font-medium">Date</th>
-                    <th className="px-5 py-2 text-right font-medium">Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
+              <>
+                <ul className="divide-y divide-slate-100 border-t border-slate-200 sm:hidden dark:divide-slate-800/60 dark:border-slate-800">
                   {recent.data.data.map((tx) => (
-                    <tr
+                    <li
                       key={tx.id}
-                      className="border-b border-slate-100 last:border-0 dark:border-slate-800/60"
+                      className="flex items-center gap-3 px-4 py-2.5"
                     >
-                      <td className="px-5 py-3 font-medium text-slate-800 dark:text-slate-100">
-                        {tx.description}
-                      </td>
-                      <td className="px-5 py-3 text-slate-500 dark:text-slate-400">
-                        {tx.category?.name ?? "Uncategorised"}
-                      </td>
-                      <td className="px-5 py-3 text-slate-500 dark:text-slate-400">
-                        {formatDate(tx.date)}
-                      </td>
-                      <td
-                        className={`px-5 py-3 text-right font-semibold ${
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">
+                          {tx.description}
+                        </p>
+                        <p className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">
+                          {tx.category?.name ?? "Uncategorised"} ·{" "}
+                          {formatDateNumeric(tx.date)}
+                        </p>
+                      </div>
+                      <span
+                        className={`shrink-0 text-sm font-semibold ${
                           tx.type === "INCOME"
                             ? "text-emerald-600 dark:text-emerald-400"
                             : "text-rose-600 dark:text-rose-400"
@@ -312,11 +316,50 @@ function Dashboard({
                       >
                         {tx.type === "INCOME" ? "+" : "−"}
                         <Money value={tx.amount} />
-                      </td>
-                    </tr>
+                      </span>
+                    </li>
                   ))}
-                </tbody>
-              </table>
+                </ul>
+
+                <table className="hidden w-full text-left text-sm sm:table">
+                  <thead>
+                    <tr className="border-y border-slate-200 text-xs uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:text-slate-400">
+                      <th className="px-5 py-2 font-medium">Description</th>
+                      <th className="px-5 py-2 font-medium">Category</th>
+                      <th className="px-5 py-2 font-medium">Date</th>
+                      <th className="px-5 py-2 text-right font-medium">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recent.data.data.map((tx) => (
+                      <tr
+                        key={tx.id}
+                        className="border-b border-slate-100 last:border-0 dark:border-slate-800/60"
+                      >
+                        <td className="px-5 py-2.5 font-medium text-slate-800 dark:text-slate-100">
+                          {tx.description}
+                        </td>
+                        <td className="px-5 py-2.5 text-slate-500 dark:text-slate-400">
+                          {tx.category?.name ?? "Uncategorised"}
+                        </td>
+                        <td className="px-5 py-2.5 text-slate-500 dark:text-slate-400">
+                          {formatDateNumeric(tx.date)}
+                        </td>
+                        <td
+                          className={`px-5 py-2.5 text-right font-semibold ${
+                            tx.type === "INCOME"
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : "text-rose-600 dark:text-rose-400"
+                          }`}
+                        >
+                          {tx.type === "INCOME" ? "+" : "−"}
+                          <Money value={tx.amount} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
             ) : (
               <div className="px-5 pb-5">
                 <EmptyState title="No transactions yet" />
@@ -333,6 +376,41 @@ function Dashboard({
             Income vs expenses
           </p>
 
+          {trendTotals ? (
+            <dl className="mt-4 grid grid-cols-3 gap-2 border-b border-slate-200 pb-4 sm:hidden dark:border-slate-800">
+              <div className="min-w-0">
+                <dt className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Income
+                </dt>
+                <dd className="mt-0.5 truncate text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+                  <Money value={trendTotals.income} />
+                </dd>
+              </div>
+              <div className="min-w-0">
+                <dt className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Expenses
+                </dt>
+                <dd className="mt-0.5 truncate text-sm font-semibold text-rose-600 dark:text-rose-400">
+                  <Money value={trendTotals.expenses} />
+                </dd>
+              </div>
+              <div className="min-w-0">
+                <dt className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Net
+                </dt>
+                <dd
+                  className={`mt-0.5 truncate text-sm font-semibold ${
+                    trendTotals.net >= 0
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-rose-600 dark:text-rose-400"
+                  }`}
+                >
+                  <Money value={trendTotals.net} signed />
+                </dd>
+              </div>
+            </dl>
+          ) : null}
+
           <div className="mt-4">
             {trend.loading ? (
               <LoadingBlock label="Loading trend…" />
@@ -346,10 +424,6 @@ function Dashboard({
           </div>
         </section>
       </div>
-
-      <p className="mt-8 text-center text-xs text-slate-400 dark:text-slate-500">
-        PaisaTrack · Data from the local API at <span className="font-mono">/api</span>
-      </p>
     </>
   );
 }
@@ -366,11 +440,11 @@ function TrendChart({
 
   return (
     <div>
-      <div className="flex h-40 items-end justify-between gap-2">
+      <div className="flex h-28 items-end justify-between gap-1 sm:h-40 sm:gap-2">
         {points.map((point) => (
           <div
             key={point.key}
-            className="flex h-full flex-1 flex-col items-center justify-end gap-1"
+            className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1"
           >
             <div className="flex h-full w-full items-end justify-center gap-1">
               <div
@@ -385,7 +459,7 @@ function TrendChart({
               />
             </div>
             <span className="text-[0.65rem] text-slate-500 dark:text-slate-400">
-              {point.label}
+              {point.label.split(" ")[0]}
             </span>
           </div>
         ))}

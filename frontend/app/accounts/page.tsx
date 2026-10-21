@@ -18,6 +18,7 @@ import {
 } from "@/lib/api";
 import {
   BTN_DANGER,
+  BTN_OUTLINE,
   BTN_PRIMARY,
   BTN_SECONDARY,
   CARD_CLASS,
@@ -45,6 +46,8 @@ export default function AccountsPage() {
   const accounts = useApi(() => listAccounts(), []);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Account | null>(null);
+  const [deleting, setDeleting] = useState<Account | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   function openCreate() {
@@ -76,24 +79,23 @@ export default function AccountsPage() {
     accounts.reload();
   }
 
-  async function handleDelete(account: Account) {
+  async function confirmDelete() {
+    if (!deleting) return;
     setError(null);
-    if (
-      !window.confirm(
-        `Delete account "${account.name}"? This cannot be undone.`,
-      )
-    ) {
-      return;
-    }
+    setDeleteBusy(true);
     try {
-      await deleteAccount(account.id);
+      await deleteAccount(deleting.id);
+      setDeleting(null);
       accounts.reload();
     } catch (err) {
+      setDeleting(null);
       if (err instanceof ApiError) {
         setError(err.message);
       } else {
         setError("Could not delete account.");
       }
+    } finally {
+      setDeleteBusy(false);
     }
   }
 
@@ -120,82 +122,59 @@ export default function AccountsPage() {
       ) : accounts.error ? (
         <ErrorBanner message={accounts.error} onRetry={accounts.reload} />
       ) : accounts.data && accounts.data.length > 0 ? (
-        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-2 gap-3 md:gap-5 xl:grid-cols-3">
           {accounts.data.map((account) => (
-            <article key={account.id} className={`${CARD_CLASS} p-5`}>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                    {account.name}
-                  </h2>
-                  <span
-                    className={`${PILL_CLASS} mt-1 bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300`}
-                  >
-                    {ACCOUNT_TYPE_LABELS[account.type] ?? account.type}
-                  </span>
-                </div>
+            <article key={account.id} className={`${CARD_CLASS} p-3 md:p-5`}>
+              <div className="flex items-start justify-between gap-2">
+                <h2 className="truncate text-sm font-semibold text-slate-900 md:text-base dark:text-slate-100">
+                  {account.name}
+                </h2>
                 {account.archived ? (
                   <span
-                    className={`${PILL_CLASS} bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300`}
+                    className={`${PILL_CLASS} shrink-0 bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300`}
                   >
                     Archived
                   </span>
                 ) : null}
               </div>
 
-              <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">
+              <p className="mt-2 text-[11px] text-slate-500 md:mt-3 md:text-xs dark:text-slate-400">
                 Current balance
               </p>
-              <p className="text-2xl font-bold text-slate-900 dark:text-slate-100">
+              <p className="truncate text-base font-bold text-slate-900 md:text-2xl dark:text-slate-100">
                 <Money value={account.balance} />
               </p>
 
-              <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                <div>
-                  <dt className="text-xs text-slate-500 dark:text-slate-400">
-                    Income
-                  </dt>
-                  <dd className="font-medium text-emerald-600 dark:text-emerald-400">
-                    <Money value={account.income} />
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-slate-500 dark:text-slate-400">
+              <dl className="mt-2 grid grid-cols-1 gap-1 text-sm md:mt-3 md:gap-2">
+                <div className="flex items-baseline justify-between gap-2">
+                  <dt className="text-[11px] text-slate-500 md:text-xs dark:text-slate-400">
                     Expenses
                   </dt>
-                  <dd className="font-medium text-rose-600 dark:text-rose-400">
+                  <dd className="truncate text-xs font-medium text-rose-600 md:text-sm dark:text-rose-400">
                     <Money value={account.expenses} />
                   </dd>
                 </div>
-                <div>
-                  <dt className="text-xs text-slate-500 dark:text-slate-400">
+                <div className="flex items-baseline justify-between gap-2">
+                  <dt className="text-[11px] text-slate-500 md:text-xs dark:text-slate-400">
                     Opening
                   </dt>
-                  <dd className="text-slate-700 dark:text-slate-200">
+                  <dd className="truncate text-xs text-slate-700 md:text-sm dark:text-slate-200">
                     <Money value={account.openingBalance} />
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-slate-500 dark:text-slate-400">
-                    Transactions
-                  </dt>
-                  <dd className="text-slate-700 dark:text-slate-200">
-                    {account.transactionCount}
                   </dd>
                 </div>
               </dl>
 
-              <div className="mt-5 flex gap-2">
+              <div className="mt-3 flex items-center gap-2 md:mt-5">
                 <button
                   type="button"
                   onClick={() => openEdit(account)}
-                  className={`${BTN_SECONDARY} flex-1`}
+                  className={`${BTN_OUTLINE} grow md:px-4 md:py-2`}
                 >
                   Edit
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleDelete(account)}
+                  onClick={() => setDeleting(account)}
                   className={BTN_DANGER}
                 >
                   Delete
@@ -222,6 +201,38 @@ export default function AccountsPage() {
           onSubmit={handleSubmit}
           onCancel={() => setFormOpen(false)}
         />
+      </Modal>
+
+      <Modal
+        open={deleting !== null}
+        onClose={() => setDeleting(null)}
+        title="Delete account"
+      >
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          Delete{" "}
+          <span className="font-medium text-slate-900 dark:text-slate-100">
+            {deleting?.name}
+          </span>
+          ? This cannot be undone. Accounts with transactions cannot be deleted.
+        </p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            className={BTN_SECONDARY}
+            disabled={deleteBusy}
+            onClick={() => setDeleting(null)}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={confirmDelete}
+            disabled={deleteBusy}
+            className="inline-flex items-center justify-center rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-rose-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {deleteBusy ? "Deleting…" : "Delete"}
+          </button>
+        </div>
       </Modal>
     </>
   );

@@ -4,11 +4,12 @@ REST API for PaisaTrack, a personal finance manager. Built with NestJS, Prisma 7
 
 ## Features
 
+- Register / sign in with email + password (bcrypt hashes, JWT bearer tokens)
+- Profile (name, email, picture) and password updates for the signed-in user
 - Accounts (cash, bank, savings, credit card, wallet) with per-account balance, income and expense totals
 - Categories for income and expenses
 - Transactions with filtering, pagination, search and CSV export
 - Monthly budgets with spent / remaining / percentage / status (`ok`, `warning`, `exceeded`)
-- Recurring transactions (daily, weekly, monthly, yearly) with catch-up of missed occurrences
 - Reports: monthly summary, category breakdown, monthly trend
 - Audit log of every write and every HTTP error, queryable via `GET /api/audit-logs`
 
@@ -30,6 +31,7 @@ REST API for PaisaTrack, a personal finance manager. Built with NestJS, Prisma 7
    ```env
    DATABASE_URL="postgresql://USER:PASSWORD@localhost:5432/finance_tracker?schema=public"
    PORT=3001
+   JWT_SECRET="change-me-to-a-long-random-string"
    ```
 
    Special characters in the password must be URL-encoded (`@` becomes `%40`).
@@ -72,13 +74,17 @@ Base URL: `http://localhost:3001/api`
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| GET | `/health` | Service status |
+| GET | `/health` | Service status (public) |
+| POST | `/auth/register` | Create an account; returns `{ token, user }` (public) |
+| POST | `/auth/login` | Exchange credentials for `{ token, user }` (public) |
+| GET | `/auth/me` | The signed-in user |
+| PATCH | `/auth/profile` | Update name / email / profile picture |
+| PATCH | `/auth/password` | Change password (current password required) |
 | GET, POST | `/accounts` | `GET /accounts/:id`, `PATCH`, `DELETE` |
 | GET, POST | `/categories` | `GET /categories/:id`, `PATCH`, `DELETE` |
 | GET, POST | `/transactions` | Filters: `type`, `accountId`, `categoryId`, `paymentMethod`, `from`, `to`, `search`, `page`, `pageSize` |
 | GET | `/transactions/export` | CSV download of the filtered transactions |
 | GET, POST | `/budgets` | Filter by `month`, `year`; `GET /budgets/:id`, `PATCH`, `DELETE` |
-| GET, POST | `/recurring` | `POST /recurring/run-due` materializes due occurrences |
 | GET | `/reports/summary` | Income, expenses, balance, savings rate, top category |
 | GET | `/reports/category-breakdown` | Totals per category |
 | GET | `/reports/monthly-trend` | Monthly income and expenses |
@@ -86,12 +92,15 @@ Base URL: `http://localhost:3001/api`
 
 Money is returned as plain numbers. Conventions:
 
+- Every route except `/health`, `/auth/register` and `/auth/login` needs an `Authorization: Bearer <token>` header; a missing or invalid token returns `401`.
 - Requests with invalid input return `400` with a `message` array of validation errors.
-- Conflicting writes (duplicate category name, duplicate budget) return `409`.
+- Conflicting writes (duplicate email, duplicate category name, duplicate budget) return `409`.
 - Deleting an account that still has transactions returns `409`.
 - Every `4xx` / `5xx` response is recorded in the audit log with level `WARN` / `ERROR`.
 
 ## Notes
 
+- `JWT_SECRET` signs session tokens and falls back to a development default when unset — set a real value outside local development.
+- The seed loads demo finance data but no user; register through the API or the web app to sign in.
 - Prisma 7 does not generate the client automatically; run `npx prisma generate` after changing the schema.
 - The generated client lives in `src/generated/prisma` and is committed as part of the source tree.

@@ -1,43 +1,467 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import PageHeader from "@/components/PageHeader";
-import { EmptyState, ErrorBanner, LoadingBlock } from "@/components/States";
+import { ErrorBanner } from "@/components/States";
 import { useTheme, type Theme } from "@/components/ThemeProvider";
+import { changePassword, updateProfile } from "@/lib/api";
 import {
-  API_ORIGIN,
-  AUDIT_LEVELS,
-  getHealth,
-  listAuditLogs,
-  type AuditLevel,
-} from "@/lib/api";
-import { formatDateTime } from "@/lib/format";
-import { BTN_SECONDARY, CARD_CLASS, FIELD_CLASS, LABEL_CLASS, PILL_CLASS } from "@/lib/ui";
-import { useApi } from "@/lib/useApi";
+  clearSession,
+  getAuthServerSnapshot,
+  getAuthSnapshot,
+  initialsOf,
+  subscribeAuth,
+  updateSessionUser,
+} from "@/lib/auth";
+import {
+  BTN_DANGER,
+  BTN_PRIMARY,
+  BTN_SECONDARY,
+  CARD_CLASS,
+  FIELD_CLASS,
+  LABEL_CLASS,
+} from "@/lib/ui";
 
-const LEVEL_STYLE: Record<AuditLevel, string> = {
-  INFO: "bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300",
-  WARN: "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300",
-  ERROR: "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300",
-};
+const TABS = [
+  { id: "profile", label: "Profile" },
+  { id: "password", label: "Password" },
+  { id: "appearance", label: "Appearance" },
+] as const;
 
-const PAGE_SIZE = 20;
+type TabId = (typeof TABS)[number]["id"];
 
 export default function SettingsPage() {
+  const [tab, setTab] = useState<TabId>("profile");
+
   return (
     <>
-      <PageHeader
-        title="Settings"
-        description="Appearance, setup information and diagnostic logs."
-      />
-      <div className="grid gap-6 lg:grid-cols-2">
-        <AppearanceSection />
-        <SetupSection />
-      </div>
-      <div className="mt-6">
-        <AuditLogSection />
+      <PageHeader title="Settings" />
+
+      <div className="grid gap-6 md:grid-cols-[13rem_minmax(0,1fr)]">
+        {/* Mobile: the tabs and the panel share one card. Desktop: split into two columns. */}
+        <div className={`${CARD_CLASS} md:contents`}>
+          <nav
+            role="tablist"
+            aria-label="Settings sections"
+            className="flex gap-1 overflow-x-auto border-b border-slate-200 p-2 md:flex-col md:overflow-visible md:rounded-2xl md:border md:border-slate-200 md:bg-white md:p-2 md:shadow-sm dark:border-slate-800 dark:md:border-slate-800 dark:md:bg-slate-900"
+          >
+            {TABS.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                role="tab"
+                id={`settings-tab-${item.id}`}
+                aria-selected={tab === item.id}
+                aria-controls="settings-panel"
+                onClick={() => setTab(item.id)}
+                className={`inline-flex shrink-0 items-center rounded-lg px-3 py-2 text-sm font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 md:w-full ${
+                  tab === item.id
+                    ? "bg-blue-600 text-white"
+                    : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
+
+          <div className="md:rounded-2xl md:border md:border-slate-200 md:bg-white md:shadow-sm dark:md:border-slate-800 dark:md:bg-slate-900">
+            <div
+              role="tabpanel"
+              id="settings-panel"
+              aria-labelledby={`settings-tab-${tab}`}
+              className="divide-y divide-slate-200 dark:divide-slate-800"
+            >
+              {tab === "profile" ? (
+                <>
+                  <PhotoSection />
+                  <ProfileSection />
+                </>
+              ) : null}
+              {tab === "password" ? <PasswordSection /> : null}
+              {tab === "appearance" ? <AppearanceSection /> : null}
+            </div>
+
+            <div className="flex justify-end border-t border-slate-200 p-5 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={clearSession}
+                className={BTN_SECONDARY}
+              >
+                Sign out
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     </>
+  );
+}
+
+const AVATAR_SIZE = 256;
+
+/** Centre-crops the chosen file to a square and returns a small JPEG data URL. */
+function toAvatarDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      const canvas = document.createElement("canvas");
+      canvas.width = AVATAR_SIZE;
+      canvas.height = AVATAR_SIZE;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        reject(new Error("Could not read the image in this browser."));
+        return;
+      }
+      const side = Math.min(image.naturalWidth, image.naturalHeight);
+      // Flatten transparency onto white so a PNG does not come out black as JPEG.
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, AVATAR_SIZE, AVATAR_SIZE);
+      context.drawImage(
+        image,
+        (image.naturalWidth - side) / 2,
+        (image.naturalHeight - side) / 2,
+        side,
+        side,
+        0,
+        0,
+        AVATAR_SIZE,
+        AVATAR_SIZE,
+      );
+      resolve(canvas.toDataURL("image/jpeg", 0.85));
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("That file could not be read as an image."));
+    };
+    image.src = objectUrl;
+  });
+}
+
+function PhotoSection() {
+  const session = useSyncExternalStore(
+    subscribeAuth,
+    getAuthSnapshot,
+    getAuthServerSnapshot,
+  );
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [pending, setPending] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!session) return null;
+
+  const shown = pending ?? session.user.avatar;
+
+  async function pick(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    // Reset so choosing the same file again still fires a change event.
+    event.target.value = "";
+    if (!file) return;
+
+    setError(null);
+    if (!file.type.startsWith("image/")) {
+      setError("Please choose an image file.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setError("Please choose an image smaller than 5 MB.");
+      return;
+    }
+
+    try {
+      setPending(await toAvatarDataUrl(file));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not read that image.");
+    }
+  }
+
+  async function save() {
+    if (!pending) return;
+    setBusy(true);
+    setError(null);
+    try {
+      updateSessionUser(await updateProfile({ avatar: pending }));
+      setPending(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save the picture.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    setBusy(true);
+    setError(null);
+    try {
+      updateSessionUser(await updateProfile({ avatar: null }));
+      setPending(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not remove the picture.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="p-5">
+      <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+        Profile picture
+      </h2>
+
+      <div className="mt-4 flex items-center gap-4">
+        <span className="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-full bg-blue-600 text-xl font-semibold text-white">
+          {shown ? (
+            // eslint-disable-next-line @next/next/no-img-element -- the avatar is a data URL, which next/image cannot optimise
+            <img src={shown} alt="" className="h-full w-full object-cover" />
+          ) : (
+            <span aria-hidden>{initialsOf(session.user.name)}</span>
+          )}
+        </span>
+
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className={BTN_SECONDARY}
+            onClick={() => inputRef.current?.click()}
+            disabled={busy}
+          >
+            Choose photo
+          </button>
+          {pending ? (
+            <button
+              type="button"
+              className={BTN_PRIMARY}
+              onClick={save}
+              disabled={busy}
+            >
+              {busy ? "Saving…" : "Save photo"}
+            </button>
+          ) : null}
+          {session.user.avatar ? (
+            <button
+              type="button"
+              className={BTN_DANGER}
+              onClick={remove}
+              disabled={busy}
+            >
+              Remove
+            </button>
+          ) : null}
+        </div>
+
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          onChange={pick}
+          className="sr-only"
+        />
+      </div>
+
+      {error ? (
+        <div className="mt-4">
+          <ErrorBanner message={error} />
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function ProfileSection() {
+  const session = useSyncExternalStore(
+    subscribeAuth,
+    getAuthSnapshot,
+    getAuthServerSnapshot,
+  );
+  const [name, setName] = useState(session?.user.name ?? "");
+  const [email, setEmail] = useState(session?.user.email ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setSaved(false);
+    if (!name.trim()) {
+      setError("Please enter your name.");
+      return;
+    }
+    setBusy(true);
+    try {
+      updateSessionUser(
+        await updateProfile({ name: name.trim(), email: email.trim() }),
+      );
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save the profile.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="p-5">
+      <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+        Profile
+      </h2>
+
+      <form onSubmit={submit} className="mt-4 space-y-4">
+        {error ? <ErrorBanner message={error} /> : null}
+
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-1 sm:gap-4">
+          <div>
+            <label className={LABEL_CLASS} htmlFor="profile-name">
+              Name
+            </label>
+            <input
+              id="profile-name"
+              className={FIELD_CLASS}
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              required
+            />
+          </div>
+
+          <div>
+            <label className={LABEL_CLASS} htmlFor="profile-email">
+              Email
+            </label>
+            <input
+              id="profile-email"
+              type="email"
+              autoComplete="email"
+              className={FIELD_CLASS}
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              required
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs text-emerald-600 dark:text-emerald-400">
+            {saved ? "Profile updated." : ""}
+          </span>
+          <button type="submit" className={BTN_PRIMARY} disabled={busy}>
+            {busy ? "Saving…" : "Save profile"}
+          </button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+function PasswordSection() {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setSaved(false);
+
+    if (newPassword.length < 8) {
+      setError("Choose a new password with at least 8 characters.");
+      return;
+    }
+    if (newPassword !== confirm) {
+      setError("The two new passwords do not match.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      await changePassword({ currentPassword, newPassword });
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirm("");
+      setSaved(true);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Could not change the password.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="p-5">
+      <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+        Password
+      </h2>
+      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+        Enter your current password, then pick a new one.
+      </p>
+
+      <form onSubmit={submit} className="mt-4 space-y-4">
+        {error ? <ErrorBanner message={error} /> : null}
+
+        <div className="grid grid-cols-2 gap-3 sm:gap-4">
+          <div className="sm:col-span-2">
+            <label className={LABEL_CLASS} htmlFor="password-current">
+              Current password
+            </label>
+            <input
+              id="password-current"
+              type="password"
+              autoComplete="current-password"
+              className={FIELD_CLASS}
+              value={currentPassword}
+              onChange={(event) => setCurrentPassword(event.target.value)}
+              required
+            />
+          </div>
+
+          <div>
+            <label className={LABEL_CLASS} htmlFor="password-new">
+              New password
+            </label>
+            <input
+              id="password-new"
+              type="password"
+              autoComplete="new-password"
+              className={FIELD_CLASS}
+              value={newPassword}
+              onChange={(event) => setNewPassword(event.target.value)}
+              placeholder="At least 8 characters"
+              required
+            />
+          </div>
+          <div className="col-span-2 sm:col-span-1">
+            <label className={LABEL_CLASS} htmlFor="password-confirm">
+              Confirm new password
+            </label>
+            <input
+              id="password-confirm"
+              type="password"
+              autoComplete="new-password"
+              className={FIELD_CLASS}
+              value={confirm}
+              onChange={(event) => setConfirm(event.target.value)}
+              required
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs text-emerald-600 dark:text-emerald-400">
+            {saved ? "Password updated." : ""}
+          </span>
+          <button type="submit" className={BTN_PRIMARY} disabled={busy}>
+            {busy ? "Updating…" : "Change password"}
+          </button>
+        </div>
+      </form>
+    </section>
   );
 }
 
@@ -50,7 +474,7 @@ function AppearanceSection() {
   ];
 
   return (
-    <section className={`${CARD_CLASS} p-5`}>
+    <section className="p-5">
       <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
         Appearance
       </h2>
@@ -59,12 +483,12 @@ function AppearanceSection() {
         setting.
       </p>
 
-      <fieldset className="mt-4 grid gap-3 sm:grid-cols-2">
+      <fieldset className="mt-4 grid grid-cols-2 gap-3">
         <legend className="sr-only">Theme</legend>
         {options.map((option) => (
           <label
             key={option.value}
-            className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition ${
+            className={`flex cursor-pointer items-start gap-2 rounded-xl border p-3 transition sm:gap-3 ${
               theme === option.value
                 ? "border-blue-500 bg-blue-50 dark:bg-blue-950/40"
                 : "border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
@@ -92,187 +516,6 @@ function AppearanceSection() {
           </label>
         ))}
       </fieldset>
-    </section>
-  );
-}
-
-function SetupSection() {
-  const health = useApi(() => getHealth(), []);
-
-  return (
-    <section className={`${CARD_CLASS} p-5`}>
-      <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-        About &amp; setup
-      </h2>
-      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-        PaisaTrack is a personal finance manager. This frontend talks to the
-        PaisaTrack REST API.
-      </p>
-
-      <dl className="mt-4 space-y-2 text-sm">
-        <div className="flex items-center justify-between gap-3">
-          <dt className="text-slate-500 dark:text-slate-400">API base (proxied)</dt>
-          <dd className="font-mono text-slate-800 dark:text-slate-100">/api</dd>
-        </div>
-        <div className="flex items-center justify-between gap-3">
-          <dt className="text-slate-500 dark:text-slate-400">Proxied to</dt>
-          <dd className="truncate font-mono text-slate-800 dark:text-slate-100">
-            {API_ORIGIN}
-          </dd>
-        </div>
-      </dl>
-
-      <div className="mt-4 rounded-xl border border-slate-200 p-3 text-sm dark:border-slate-800">
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-slate-500 dark:text-slate-400">Backend health</span>
-          {health.loading ? (
-            <span className="text-slate-400">checking…</span>
-          ) : health.error ? (
-            <span className="font-medium text-rose-600 dark:text-rose-400">
-              unreachable
-            </span>
-          ) : (
-            <span className="font-medium text-emerald-600 dark:text-emerald-400">
-              {health.data?.status ?? "ok"}
-            </span>
-          )}
-        </div>
-        {health.data ? (
-          <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
-            {health.data.service} · {formatDateTime(health.data.timestamp)}
-          </p>
-        ) : null}
-        {health.error ? (
-          <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
-            Start the backend on {API_ORIGIN} to enable live data.
-          </p>
-        ) : null}
-      </div>
-    </section>
-  );
-}
-
-function AuditLogSection() {
-  const [level, setLevel] = useState<AuditLevel | "">("");
-  const [page, setPage] = useState(1);
-
-  const logs = useApi(
-    () => listAuditLogs({ level, page, pageSize: PAGE_SIZE }),
-    [level, page],
-  );
-
-  const totalPages = logs.data?.totalPages ?? 1;
-
-  return (
-    <section className={`${CARD_CLASS} p-5`}>
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-            Error &amp; audit logs
-          </h2>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Recent activity recorded by the API.
-          </p>
-        </div>
-        <div>
-          <label className={LABEL_CLASS} htmlFor="audit-level">
-            Level
-          </label>
-          <select
-            id="audit-level"
-            className={FIELD_CLASS}
-            value={level}
-            onChange={(event) => {
-              setLevel(event.target.value as AuditLevel | "");
-              setPage(1);
-            }}
-          >
-            <option value="">All levels</option>
-            {AUDIT_LEVELS.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      <div className="mt-4">
-        {logs.loading ? (
-          <LoadingBlock label="Loading logs…" />
-        ) : logs.error ? (
-          <ErrorBanner message={logs.error} onRetry={logs.reload} />
-        ) : logs.data && logs.data.data.length > 0 ? (
-          <>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[640px] text-left text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:text-slate-400">
-                    <th className="px-3 py-2 font-medium">Level</th>
-                    <th className="px-3 py-2 font-medium">Action</th>
-                    <th className="px-3 py-2 font-medium">Entity</th>
-                    <th className="px-3 py-2 font-medium">Message</th>
-                    <th className="px-3 py-2 font-medium">When</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {logs.data.data.map((log) => (
-                    <tr
-                      key={log.id}
-                      className="border-b border-slate-100 last:border-0 dark:border-slate-800/60"
-                    >
-                      <td className="px-3 py-2">
-                        <span className={`${PILL_CLASS} ${LEVEL_STYLE[log.level]}`}>
-                          {log.level}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 font-medium text-slate-800 dark:text-slate-100">
-                        {log.action}
-                      </td>
-                      <td className="px-3 py-2 text-slate-500 dark:text-slate-400">
-                        {log.entity}
-                        {log.entityId ? ` #${log.entityId}` : ""}
-                      </td>
-                      <td className="px-3 py-2 text-slate-500 dark:text-slate-400">
-                        {log.message ?? "—"}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2 text-slate-500 dark:text-slate-400">
-                        {formatDateTime(log.createdAt)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="mt-3 flex items-center justify-between gap-3 text-sm">
-              <span className="text-slate-500 dark:text-slate-400">
-                Page {logs.data.page} of {totalPages} · {logs.data.total} entries
-              </span>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  className={BTN_SECONDARY}
-                  disabled={page <= 1}
-                  onClick={() => setPage((prev) => Math.max(1, prev - 1))}
-                >
-                  Previous
-                </button>
-                <button
-                  type="button"
-                  className={BTN_SECONDARY}
-                  disabled={page >= totalPages}
-                  onClick={() => setPage((prev) => prev + 1)}
-                >
-                  Next
-                </button>
-              </div>
-            </div>
-          </>
-        ) : (
-          <EmptyState title="No logs found" hint="Try a different level filter." />
-        )}
-      </div>
     </section>
   );
 }

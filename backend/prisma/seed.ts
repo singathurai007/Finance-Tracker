@@ -2,7 +2,6 @@ import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
 import {
   AccountType,
-  Frequency,
   PaymentMethod,
   PrismaClient,
   TransactionType,
@@ -160,59 +159,15 @@ async function seedTransactions(categoryIds: Map<string, number>, accountIds: Ma
   return created;
 }
 
-async function seedRecurring(categoryIds: Map<string, number>, accountIds: Map<string, number>): Promise<number> {
-  if ((await prisma.recurringTransaction.count()) > 0) {
-    return 0;
-  }
-
-  const nextMonth = relativeMonth(1);
-  const dueDate = new Date();
-  dueDate.setUTCDate(dueDate.getUTCDate() - 10);
-
-  const rules = [
-    { description: 'Monthly Salary', type: TransactionType.INCOME, amount: 25000, category: 'Salary', account: 'HDFC Savings', paymentMethod: PaymentMethod.NET_BANKING, frequency: Frequency.MONTHLY, nextRun: dayOf(nextMonth, 1) },
-    { description: 'House Rent', type: TransactionType.EXPENSE, amount: 6000, category: 'Housing', account: 'HDFC Savings', paymentMethod: PaymentMethod.NET_BANKING, frequency: Frequency.MONTHLY, nextRun: dayOf(nextMonth, 3) },
-    { description: 'Gym Membership', type: TransactionType.EXPENSE, amount: 1200, category: 'Health', account: 'HDFC Credit Card', paymentMethod: PaymentMethod.CREDIT_CARD, frequency: Frequency.MONTHLY, nextRun: dayOf(nextMonth, 5) },
-    // Left in the past on purpose so "Run due" has something to materialise.
-    { description: 'Internet Bill', type: TransactionType.EXPENSE, amount: 800, category: 'Bills', account: 'HDFC Savings', paymentMethod: PaymentMethod.UPI, frequency: Frequency.MONTHLY, nextRun: dueDate },
-  ];
-
-  let created = 0;
-
-  for (const rule of rules) {
-    const accountId = accountIds.get(rule.account);
-    if (accountId === undefined) {
-      continue;
-    }
-
-    await prisma.recurringTransaction.create({
-      data: {
-        description: rule.description,
-        type: rule.type,
-        amount: rule.amount,
-        paymentMethod: rule.paymentMethod,
-        frequency: rule.frequency,
-        nextRun: rule.nextRun,
-        accountId,
-        categoryId: categoryIds.get(rule.category) ?? null,
-      },
-    });
-    created += 1;
-  }
-
-  return created;
-}
-
 async function main(): Promise<void> {
   const categoryIds = await seedCategories();
   const accountIds = await seedAccounts();
   const budgets = await seedBudgets(categoryIds);
   const transactions = await seedTransactions(categoryIds, accountIds);
-  const recurring = await seedRecurring(categoryIds, accountIds);
 
   console.log(
     `Seed complete: ${categoryIds.size} categories, ${accountIds.size} accounts, ` +
-      `${budgets} budgets, ${transactions} new transactions, ${recurring} recurring rules.`,
+      `${budgets} budgets, ${transactions} new transactions.`,
   );
 }
 

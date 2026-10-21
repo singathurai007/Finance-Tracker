@@ -60,8 +60,7 @@ html[data-sidebar="collapsed"] .sidebar-chevron {
   }
 
   html[data-sidebar="collapsed"] .sidebar-brand,
-  html[data-sidebar="collapsed"] .sidebar-label,
-  html[data-sidebar="collapsed"] .sidebar-footer {
+  html[data-sidebar="collapsed"] .sidebar-label {
     display: none;
   }
 

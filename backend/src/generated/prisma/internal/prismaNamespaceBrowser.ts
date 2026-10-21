@@ -55,8 +55,8 @@ export const ModelName = {
   Category: 'Category',
   Transaction: 'Transaction',
   Budget: 'Budget',
-  RecurringTransaction: 'RecurringTransaction',
-  AuditLog: 'AuditLog'
+  AuditLog: 'AuditLog',
+  User: 'User'
 } as const
 
 export type ModelName = (typeof ModelName)[keyof typeof ModelName]
@@ -131,26 +131,6 @@ export const BudgetScalarFieldEnum = {
 export type BudgetScalarFieldEnum = (typeof BudgetScalarFieldEnum)[keyof typeof BudgetScalarFieldEnum]
 
 
-export const RecurringTransactionScalarFieldEnum = {
-  id: 'id',
-  description: 'description',
-  type: 'type',
-  amount: 'amount',
-  paymentMethod: 'paymentMethod',
-  frequency: 'frequency',
-  interval: 'interval',
-  nextRun: 'nextRun',
-  lastRun: 'lastRun',
-  active: 'active',
-  createdAt: 'createdAt',
-  updatedAt: 'updatedAt',
-  accountId: 'accountId',
-  categoryId: 'categoryId'
-} as const
-
-export type RecurringTransactionScalarFieldEnum = (typeof RecurringTransactionScalarFieldEnum)[keyof typeof RecurringTransactionScalarFieldEnum]
-
-
 export const AuditLogScalarFieldEnum = {
   id: 'id',
   level: 'level',
@@ -163,6 +143,19 @@ export const AuditLogScalarFieldEnum = {
 } as const
 
 export type AuditLogScalarFieldEnum = (typeof AuditLogScalarFieldEnum)[keyof typeof AuditLogScalarFieldEnum]
+
+
+export const UserScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  email: 'email',
+  passwordHash: 'passwordHash',
+  avatar: 'avatar',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type UserScalarFieldEnum = (typeof UserScalarFieldEnum)[keyof typeof UserScalarFieldEnum]
 
 
 export const SortOrder = {

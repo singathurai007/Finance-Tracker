@@ -17,7 +17,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "PaisaTrack — Personal Finance Manager",
   description:
-    "Track accounts, transactions, budgets and recurring payments in one place.",
+    "Track accounts, transactions and budgets in one place.",
 };
 
 // Runs before paint to apply the persisted (or OS) theme and the persisted

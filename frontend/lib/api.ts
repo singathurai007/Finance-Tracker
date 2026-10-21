@@ -5,6 +5,8 @@
  * `http://localhost:3001/api/...` (see `next.config.ts`).
  */
 
+import { clearSession, getToken, type AuthUser, type Session } from "./auth";
+
 export const API_BASE = "/api";
 export const API_ORIGIN = "http://localhost:3001/api";
 
@@ -19,7 +21,6 @@ export type PaymentMethod =
   | "CREDIT_CARD"
   | "NET_BANKING"
   | "OTHER";
-export type Frequency = "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY";
 export type BudgetStatus = "ok" | "warning" | "exceeded";
 export type AuditLevel = "INFO" | "WARN" | "ERROR";
 
@@ -39,12 +40,6 @@ export const PAYMENT_METHODS: readonly PaymentMethod[] = [
   "NET_BANKING",
   "OTHER",
 ];
-export const FREQUENCIES: readonly Frequency[] = [
-  "DAILY",
-  "WEEKLY",
-  "MONTHLY",
-  "YEARLY",
-];
 export const AUDIT_LEVELS: readonly AuditLevel[] = ["INFO", "WARN", "ERROR"];
 
 export const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
@@ -62,13 +57,6 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   CREDIT_CARD: "Credit card",
   NET_BANKING: "Net banking",
   OTHER: "Other",
-};
-
-export const FREQUENCY_LABELS: Record<Frequency, string> = {
-  DAILY: "Daily",
-  WEEKLY: "Weekly",
-  MONTHLY: "Monthly",
-  YEARLY: "Yearly",
 };
 
 /* ----------------------------------------------------------------- models */
@@ -150,28 +138,6 @@ export interface Budget {
   remaining: number;
   percentage: number;
   status: BudgetStatus;
-}
-
-export interface Recurring {
-  id: number;
-  description: string;
-  type: TransactionType;
-  amount: number;
-  paymentMethod: PaymentMethod;
-  frequency: Frequency;
-  interval: number;
-  nextRun: string;
-  lastRun: string | null;
-  active: boolean;
-  accountId: number;
-  account: Account | null;
-  categoryId: number | null;
-  category: Category | null;
-}
-
-export interface RunDueResult {
-  created: number;
-  transactions: Transaction[];
 }
 
 export interface ReportSummary {
@@ -258,6 +224,11 @@ function messageFromBody(body: ApiErrorBody | null, status: number): string {
   return `Request failed (status ${status}).`;
 }
 
+function authHeaders(): Record<string, string> {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
@@ -266,6 +237,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       headers: {
         Accept: "application/json",
         ...(init?.body ? { "Content-Type": "application/json" } : {}),
+        ...authHeaders(),
       },
     });
   } catch {
@@ -288,6 +260,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!res.ok) {
+    // An expired or revoked token should drop the session so the shell
+    // sends the user back to the login page.
+    if (res.status === 401) clearSession();
     const body = (parsed as ApiErrorBody | null) ?? null;
     throw new ApiError(messageFromBody(body, res.status), res.status, body);
   }
@@ -386,8 +361,8 @@ export interface TransactionFilters {
   categoryId?: number | "";
   accountId?: number | "";
   search?: string;
-  from?: string;
-  to?: string;
+  /** "YYYY-MM"; expanded to the inclusive from/to range the API expects. */
+  month?: string;
   page?: number;
   pageSize?: number;
   sortBy?: "date" | "amount";
@@ -395,18 +370,31 @@ export interface TransactionFilters {
 }
 
 export function transactionQuery(filters: TransactionFilters): string {
+  const range = monthRange(filters.month);
   return buildQuery({
     type: filters.type,
     categoryId: filters.categoryId,
     accountId: filters.accountId,
     search: filters.search,
-    from: filters.from,
-    to: filters.to,
+    from: range.from,
+    to: range.to,
     page: filters.page,
     pageSize: filters.pageSize,
     sortBy: filters.sortBy,
     sortOrder: filters.sortOrder,
   });
+}
+
+/** "YYYY-MM" -> date-only range from the 1st to the last day of that month. */
+function monthRange(month?: string): { from?: string; to?: string } {
+  const match = /^(\d{4})-(\d{2})$/.exec(month ?? "");
+  if (!match) return {};
+  const [, year, monthNumber] = match;
+  const lastDay = new Date(Date.UTC(Number(year), Number(monthNumber), 0)).getUTCDate();
+  return {
+    from: `${year}-${monthNumber}-01`,
+    to: `${year}-${monthNumber}-${String(lastDay).padStart(2, "0")}`,
+  };
 }
 
 export interface TransactionInput {
@@ -459,6 +447,44 @@ export function transactionsExportHref(filters: TransactionFilters): string {
   return `${API_BASE}/transactions/export${qs ? `?${qs}` : ""}`;
 }
 
+/**
+ * Downloads the filtered CSV with the bearer token attached.
+ *
+ * A plain `<a download>` cannot send the Authorization header, so the file is
+ * fetched as a Blob and handed to the browser instead.
+ */
+export async function downloadTransactionsCsv(
+  filters: TransactionFilters,
+): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(transactionsExportHref(filters), {
+      headers: authHeaders(),
+    });
+  } catch {
+    throw new ApiError(
+      `Could not reach the API at ${API_ORIGIN}. Make sure the backend is running.`,
+      0,
+    );
+  }
+
+  if (!res.ok) {
+    if (res.status === 401) clearSession();
+    throw new ApiError(`Export failed (status ${res.status}).`, res.status);
+  }
+
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const filename = /filename="?([^"]+)"?/.exec(disposition)?.[1] ?? "transactions.csv";
+  const url = URL.createObjectURL(await res.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 /* ---------------------------------------------------------------- budgets */
 
 export interface BudgetInput {
@@ -488,49 +514,6 @@ export function updateBudget(id: number, amount: number): Promise<Budget> {
 
 export function deleteBudget(id: number): Promise<void> {
   return request<void>(`/budgets/${id}`, { method: "DELETE" });
-}
-
-/* -------------------------------------------------------------- recurring */
-
-export interface RecurringInput {
-  description: string;
-  type: TransactionType;
-  amount: number;
-  accountId: number;
-  categoryId?: number | null;
-  paymentMethod?: PaymentMethod;
-  frequency: Frequency;
-  interval?: number;
-  nextRun: string;
-}
-
-export function listRecurring(): Promise<Recurring[]> {
-  return request<Recurring[]>("/recurring");
-}
-
-export function createRecurring(input: RecurringInput): Promise<Recurring> {
-  return request<Recurring>("/recurring", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
-
-export function updateRecurring(
-  id: number,
-  input: Partial<RecurringInput> & { active?: boolean },
-): Promise<Recurring> {
-  return request<Recurring>(`/recurring/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify(input),
-  });
-}
-
-export function deleteRecurring(id: number): Promise<void> {
-  return request<void>(`/recurring/${id}`, { method: "DELETE" });
-}
-
-export function runDueRecurring(): Promise<RunDueResult> {
-  return request<RunDueResult>("/recurring/run-due", { method: "POST" });
 }
 
 /* ---------------------------------------------------------------- reports */
@@ -566,4 +549,61 @@ export function listAuditLogs(params: {
   pageSize?: number;
 }): Promise<AuditLogsResult> {
   return request<AuditLogsResult>(`/audit-logs?${buildQuery(params)}`);
+}
+
+/* ------------------------------------------------------------------- auth */
+
+export interface RegisterInput {
+  name: string;
+  email: string;
+  password: string;
+}
+
+export interface LoginInput {
+  email: string;
+  password: string;
+}
+
+export interface ProfileInput {
+  name?: string;
+  email?: string;
+  /** Base64 image data URL, or `null` to remove the current picture. */
+  avatar?: string | null;
+}
+
+export interface PasswordInput {
+  currentPassword: string;
+  newPassword: string;
+}
+
+export function register(input: RegisterInput): Promise<Session> {
+  return request<Session>("/auth/register", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function login(input: LoginInput): Promise<Session> {
+  return request<Session>("/auth/login", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function getMe(): Promise<AuthUser> {
+  return request<AuthUser>("/auth/me");
+}
+
+export function updateProfile(input: ProfileInput): Promise<AuthUser> {
+  return request<AuthUser>("/auth/profile", {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export function changePassword(input: PasswordInput): Promise<void> {
+  return request<void>("/auth/password", {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
 }

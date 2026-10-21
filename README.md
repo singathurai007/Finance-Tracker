@@ -1,6 +1,6 @@
 # PaisaTrack
 
-A self-hosted personal finance manager — track where your money comes from and where it goes, across multiple accounts, budgets and recurring payments.
+A self-hosted personal finance manager — track where your money comes from and where it goes, across multiple accounts and budgets.
 
 PaisaTrack is a full-stack application: a **NestJS + Prisma + PostgreSQL** REST API behind a **Next.js 16** dashboard. It runs entirely on your own machine, so your financial data never leaves your control.
 
@@ -21,6 +21,9 @@ It solves the everyday problems of personal money management:
 
 ## Features
 
+**Accounts and sign-in**
+Register an account or sign in to reach the dashboard. Passwords are stored as bcrypt hashes, sessions use a JWT bearer token, and every API route except health, register and login is protected — the data cannot be read without a valid token.
+
 **Accounts**
 Track Cash, Bank, Savings, Credit Card and Wallet separately. Each account reports its own income, expenses and running balance, so you always know which pocket the money is in.
 
@@ -29,9 +32,6 @@ Full CRUD with filtering by type, account, category, payment method and date ran
 
 **Budgets**
 Set a monthly limit per category. Each budget returns `spent`, `remaining`, `percentage` and a status of `ok`, `warning` or `exceeded`, so overspending is visible immediately instead of at month end.
-
-**Recurring transactions**
-Define a rule (daily, weekly, monthly or yearly, with a custom interval) for salary, rent, subscriptions or EMIs. `POST /recurring/run-due` materialises every occurrence that has been missed since the rule was last run and advances the next run date.
 
 **Reports**
 Monthly summary (income, expenses, balance, savings rate, top category), category breakdown, and a monthly trend for the last several months.
@@ -62,6 +62,7 @@ Mobile (sidebar collapses into a drawer), tablet and desktop (sidebar collapses 
 | Database driver | `@prisma/adapter-pg` over `pg` | `^7.10.1` / `^8.23.1` |
 | Database | PostgreSQL | 14+ |
 | Validation | `class-validator` + `class-transformer` | `^0.15.1` / `^0.5.1` |
+| Auth | `@nestjs/jwt` + `bcryptjs` | `^12.0.3` / `^3.0.3` |
 | Observability | `@nestjs/observe` | `^0.1.8` |
 | Testing | Vitest (+ Supertest for e2e) | `^4.1.2` |
 | Linting | oxlint | `^1.58.0` |
@@ -102,6 +103,8 @@ Request flow inside the API:
 
 ```
 Request
+  → JwtAuthGuard               (global; every route needs a bearer token
+                                unless it carries @Public())
   → ValidationPipe            (whitelist, transform, implicit conversion)
   → Controller                (route + DTO)
   → Service                   (business logic + Prisma)
@@ -119,15 +122,15 @@ Response
 finance-tracker/
 ├── backend/
 │   ├── prisma/
-│   │   ├── schema.prisma          # 6 models, 5 enums
+│   │   ├── schema.prisma          # 6 models, 4 enums
 │   │   ├── migrations/            # versioned SQL migrations
 │   │   └── seed.ts                # idempotent demo data
 │   ├── src/
+│   │   ├── auth/                  # register, login, profile, password
 │   │   ├── accounts/              # controller + service + DTOs per feature
 │   │   ├── categories/
 │   │   ├── transactions/          # filtering, pagination, CSV export
 │   │   ├── budgets/               # spent / remaining / percentage / status
-│   │   ├── recurring/             # rules + catch-up of missed occurrences
 │   │   ├── reports/               # summary, category breakdown, monthly trend
 │   │   ├── audit/                 # audit log service + query endpoint
 │   │   ├── common/
@@ -143,17 +146,19 @@ finance-tracker/
 │
 └── frontend/
     ├── app/
+    │   ├── login/page.tsx         # sign in
+    │   ├── register/page.tsx      # create an account
     │   ├── page.tsx               # dashboard
     │   ├── transactions/page.tsx
     │   ├── accounts/page.tsx
     │   ├── budgets/page.tsx
-    │   ├── recurring/page.tsx
-    │   ├── settings/page.tsx
+    │   ├── settings/page.tsx      # picture, profile, password, appearance
     │   ├── layout.tsx             # shell + pre-paint theme script
     │   └── globals.css            # Tailwind + theme tokens
-    ├── components/                # AppShell, Sidebar, Modal, TransactionForm,
-    │                              # Money, StatCard, ProgressBar, ThemeToggle, ...
+    ├── components/                # AppShell, Sidebar, Modal, AuthLayout,
+    │                              # TransactionForm, Money, StatCard, ...
     ├── lib/                       # api client, hooks, formatting, stores
+    │                              # (api.ts, auth.ts, theme.ts, sidebar.ts)
     └── next.config.ts             # /api rewrite to the backend
 ```
 
@@ -191,6 +196,7 @@ Create `backend/.env`:
 ```env
 DATABASE_URL="postgresql://postgres:YOUR_PASSWORD@localhost:5432/finance_tracker?schema=public"
 PORT=3001
+JWT_SECRET="change-me-to-a-long-random-string"
 ```
 
 Special characters in the password must be URL-encoded — for example `@` becomes `%40`, otherwise the connection string is parsed incorrectly.
@@ -214,7 +220,7 @@ npm install
 npm run dev                # http://localhost:3000
 ```
 
-Open `http://localhost:3000`.
+Open `http://localhost:3000`. The app opens on the sign-in screen — choose **Create an account**, register, and you land on the dashboard. The demo data loaded by the seed is visible to any signed-in user.
 
 ---
 
@@ -224,6 +230,7 @@ Open `http://localhost:3000`.
 | --- | --- | --- | --- |
 | `DATABASE_URL` | `backend/.env` | — | PostgreSQL connection string |
 | `PORT` | `backend/.env` | `3001` | API port |
+| `JWT_SECRET` | `backend/.env` | `paisatrack-development-secret` | Signs session tokens — set a real value in any non-local environment |
 
 The frontend needs no environment variables — the API location is a build-time rewrite in `next.config.ts`.
 
@@ -235,15 +242,18 @@ Base URL: `http://localhost:3001/api`
 
 | Method | Endpoint | Notes |
 | --- | --- | --- |
-| `GET` | `/health` | Service status and timestamp |
+| `GET` | `/health` | Service status and timestamp — **public** |
+| `POST` | `/auth/register` | Create an account; returns `{ token, user }` — **public** |
+| `POST` | `/auth/login` | Exchange email + password for `{ token, user }` — **public** |
+| `GET` | `/auth/me` | The signed-in user |
+| `PATCH` | `/auth/profile` | Update name / email / profile picture |
+| `PATCH` | `/auth/password` | Change password (`204`, current password required) |
 | `GET` `POST` | `/accounts` | `GET` `PATCH` `DELETE` `/accounts/:id` |
 | `GET` `POST` | `/categories` | `GET` `PATCH` `DELETE` `/categories/:id` |
 | `GET` `POST` | `/transactions` | Filters: `type`, `accountId`, `categoryId`, `paymentMethod`, `from`, `to`, `search`, `page`, `pageSize` |
 | `GET` `PATCH` `DELETE` | `/transactions/:id` | Single transaction |
 | `GET` | `/transactions/export` | CSV download of the filtered list |
 | `GET` `POST` | `/budgets` | Filters: `month`, `year`; `GET` `PATCH` `DELETE` `/budgets/:id` |
-| `GET` `POST` | `/recurring` | `GET` `PATCH` `DELETE` `/recurring/:id` |
-| `POST` | `/recurring/run-due` | Materialise all due occurrences |
 | `GET` | `/reports/summary` | Income, expenses, balance, savings rate, top category |
 | `GET` | `/reports/category-breakdown` | Totals per category |
 | `GET` | `/reports/monthly-trend` | Monthly income and expenses |
@@ -251,24 +261,25 @@ Base URL: `http://localhost:3001/api`
 
 ### Conventions
 
+- Every endpoint except `/health`, `/auth/register` and `/auth/login` requires `Authorization: Bearer <token>`. A missing or invalid token returns `401`, and the front end signs the user out when it sees one.
 - Money is returned as **plain numbers**, never as a serialised decimal object.
 - Validation failures return `400` with a `message` array.
-- Conflicting writes return `409` — duplicate category name, duplicate budget for the same category and month, or deleting an account that still has transactions.
+- Conflicting writes return `409` — duplicate email, duplicate category name, duplicate budget for the same category and month, or deleting an account that still has transactions.
 - Every 4xx and 5xx response is written to the audit log with level `WARN` or `ERROR`.
 
 ---
 
 ## Data model
 
-Six models and five enums:
+Six models and four enums:
 
 | Model | Purpose |
 | --- | --- |
+| `User` | An account: name, unique email and bcrypt password hash |
 | `Account` | A wallet with a type, opening balance and currency |
 | `Category` | Income or expense category with a colour |
 | `Transaction` | A single income or expense entry |
 | `Budget` | Monthly limit per category, unique on `(categoryId, month, year)` |
-| `RecurringTransaction` | A schedule that generates transactions |
 | `AuditLog` | Write actions and HTTP errors, with level, entity and JSON metadata |
 
 | Enum | Values |
@@ -276,7 +287,6 @@ Six models and five enums:
 | `TransactionType` | `INCOME`, `EXPENSE` |
 | `AccountType` | `CASH`, `BANK`, `SAVINGS`, `CREDIT_CARD`, `WALLET` |
 | `PaymentMethod` | `CASH`, `UPI`, `DEBIT_CARD`, `CREDIT_CARD`, `NET_BANKING`, `OTHER` |
-| `Frequency` | `DAILY`, `WEEKLY`, `MONTHLY`, `YEARLY` |
 | `LogLevel` | `INFO`, `WARN`, `ERROR` |
 
 Money is stored as `Decimal(12, 2)` in PostgreSQL and rounded to paise at the boundary, so totals never drift through floating-point error. Deleting a category sets its transactions' category to `NULL` rather than destroying history.
@@ -316,9 +326,9 @@ Money is stored as `Decimal(12, 2)` in PostgreSQL and rounded to paise at the bo
 A few decisions worth calling out:
 
 - **Decimal serialisation.** Prisma returns `Decimal` objects that `JSON.stringify` turns into `{"s":1,"e":2,"d":[...]}`. A global interceptor walks every response and converts them to plain numbers using `Prisma.Decimal.isDecimal`, so the frontend never has to know about Prisma.
+- **Auth by default, not by opt-in.** `JwtAuthGuard` is registered as a global `APP_GUARD`, so a new endpoint is protected unless it explicitly carries `@Public()`. Forgetting the guard fails closed instead of exposing a route.
 - **Audit without polluting services.** Recording is done by an interceptor and an exception filter, so no service contains logging code. Adding a new write endpoint gets auditing for free.
 - **UTC-based period helpers.** Month boundaries, "days in month" and date-range resolution live in one module and are computed in UTC, which avoids the off-by-one-day bugs that appear when a server and a browser disagree about time zones.
-- **Catch-up with a guard.** Recurring rules advance one interval at a time and stop after 60 iterations, so a rule left in the past cannot spin forever while still backfilling what it owes.
 - **CSV that Excel understands.** The export is prefixed with a UTF-8 BOM and sent with `Content-Disposition: attachment`; without the BOM, non-ASCII descriptions are mangled on open.
 - **No flash of the wrong theme.** A small inline script in the layout applies the stored theme and sidebar state to `<html>` before the first paint.
 - **Proxy instead of CORS.** Browser requests stay same-origin; Next.js forwards `/api/*` to the API. No CORS configuration to get wrong.
@@ -327,8 +337,8 @@ A few decisions worth calling out:
 
 ## Roadmap
 
-- Authentication and multi-user support (the schema is single-user today)
-- Notifications for budget limits and upcoming recurring payments
+- Per-user data scoping (accounts, transactions and budgets are shared across every signed-in user today)
+- Notifications for budget limits
 - Docker Compose for one-command local setup
 - An audit log page in the UI (currently API-only)
 - Automated deployment pipeline
