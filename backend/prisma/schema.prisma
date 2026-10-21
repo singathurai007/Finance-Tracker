@@ -1,0 +1,147 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+}
+
+enum AccountType {
+  CASH
+  BANK
+  SAVINGS
+  CREDIT_CARD
+  WALLET
+}
+
+enum PaymentMethod {
+  CASH
+  UPI
+  DEBIT_CARD
+  CREDIT_CARD
+  NET_BANKING
+  OTHER
+}
+
+enum Frequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
+enum LogLevel {
+  INFO
+  WARN
+  ERROR
+}
+
+model Account {
+  id             Int      @id @default(autoincrement())
+  name           String
+  type           AccountType @default(CASH)
+  openingBalance Decimal  @default(0) @db.Decimal(12, 2)
+  currency       String   @default("INR")
+  archived       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  transactions Transaction[]
+  recurring    RecurringTransaction[]
+
+  @@index([archived])
+}
+
+model Category {
+  id   Int             @id @default(autoincrement())
+  name String          @unique
+  type TransactionType
+  color String         @default("#64748b")
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  transactions Transaction[]
+  budgets      Budget[]
+  recurring    RecurringTransaction[]
+
+  @@index([type])
+}
+
+model Transaction {
+  id            Int             @id @default(autoincrement())
+  type          TransactionType
+  description   String
+  amount        Decimal         @db.Decimal(12, 2)
+  paymentMethod PaymentMethod   @default(CASH)
+  notes         String?
+  date          DateTime        @default(now())
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  accountId  Int
+  account    Account   @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  categoryId Int?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@index([date])
+  @@index([type])
+  @@index([accountId])
+  @@index([categoryId])
+}
+
+model Budget {
+  id         Int      @id @default(autoincrement())
+  amount     Decimal  @db.Decimal(12, 2)
+  month      Int
+  year       Int
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  categoryId Int
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([categoryId, month, year])
+  @@index([year, month])
+}
+
+model RecurringTransaction {
+  id            Int             @id @default(autoincrement())
+  description   String
+  type          TransactionType
+  amount        Decimal         @db.Decimal(12, 2)
+  paymentMethod PaymentMethod   @default(CASH)
+  frequency     Frequency       @default(MONTHLY)
+  interval      Int             @default(1)
+  nextRun       DateTime
+  lastRun       DateTime?
+  active        Boolean         @default(true)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  accountId  Int
+  account    Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  categoryId Int?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@index([active, nextRun])
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  level     LogLevel @default(INFO)
+  action    String
+  entity    String
+  entityId  String?
+  message   String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([level])
+}
