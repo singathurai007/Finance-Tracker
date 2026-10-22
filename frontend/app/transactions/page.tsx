@@ -457,22 +457,48 @@ export default function TransactionsPage() {
                       <Money value={tx.amount} />
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={() => openEdit(tx)}
-                          className={BTN_GHOST}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDeleting(tx)}
-                          className={BTN_DANGER_TEXT}
-                        >
-                          Delete
-                        </button>
-                      </div>
+                      <div className="flex items-center justify-between gap-3 border-t border-slate-200 px-4 py-3 dark:border-slate-800">
+  <span
+    className="text-sm font-semibold text-slate-600 dark:text-slate-300"
+    aria-label={`Page ${currentPage} of ${totalPages}`}
+  >
+    {currentPage}/{result.total}
+  </span>
+
+  <div className="flex items-center gap-2">
+    <button
+      type="button"
+      aria-label="Previous page"
+      title="Previous page"
+      disabled={currentPage <= 1}
+      onClick={() =>
+        setFilters((prev) => ({
+          ...prev,
+          page: Math.max(1, (prev.page ?? 1) - 1),
+        }))
+      }
+      className={`${BTN_SECONDARY} !px-3`}
+    >
+      ‹
+    </button>
+
+    <button
+      type="button"
+      aria-label="Next page"
+      title="Next page"
+      disabled={currentPage >= totalPages}
+      onClick={() =>
+        setFilters((prev) => ({
+          ...prev,
+          page: (prev.page ?? 1) + 1,
+        }))
+      }
+      className={`${BTN_SECONDARY} !px-3`}
+    >
+      ›
+    </button>
+  </div>
+</div>
                     </td>
                   </tr>
                 ))}

@@ -82,15 +82,7 @@ export default function SettingsPage() {
               {tab === "appearance" ? <AppearanceSection /> : null}
             </div>
 
-            <div className="flex justify-end border-t border-slate-200 p-5 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={clearSession}
-                className={BTN_SECONDARY}
-              >
-                Sign out
-              </button>
-            </div>
+           
           </div>
         </div>
       </div>

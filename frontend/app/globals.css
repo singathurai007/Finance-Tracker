@@ -79,3 +79,24 @@ html[data-sidebar="collapsed"] .sidebar-chevron {
     padding-right: 0;
   }
 }
+
+/* Prevent unwanted horizontal scrolling */
+html,
+body {
+  max-width: 100%;
+}
+
+body {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* Keep desktop sidebar inside the viewport */
+@media (min-width: 768px) {
+  .sidebar-panel {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    flex-shrink: 0;
+  }
+}
